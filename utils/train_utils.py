@@ -35,11 +35,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from policies import bfSixteen, fpSixteen,bfSixteen_mixed, get_llama_wrapper
 
-scaler = ShardedGradScaler()
-
-
-
-
 def set_tokenizer_params(tokenizer: LlamaTokenizer):
     tokenizer.pad_token_id = 0
     tokenizer.padding_side = "left"
@@ -67,8 +62,11 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
     Returns: results dictionary containing average training and validation perplexity and loss
     """
     # Create a gradient scaler for fp16
-    scaler = torch.cuda.amp.GradScaler() if train_config.use_fp16 else None
-
+    if train_config.use_fp16 and train_config.enable_fsdp:
+        scaler = ShardedGradScaler()
+    elif train_config.use_fp16 and not train_config.enable_fsdp:
+        scaler = torch.cuda.amp.GradScaler() 
+        
     train_prep = []
     train_loss = []
     val_prep = []
@@ -86,9 +84,9 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                     if train_config.enable_fsdp:
                         batch[key] = batch[key].to(local_rank)
                     else:
-                        batch[key] = batch[key].to('cuda')       
-                outputs = model(**batch)
-                loss = outputs.loss
+
+                        batch[key] = batch[key].to('cuda:0')              
+                loss = model(**batch).loss
                 loss = loss / gradient_accumulation_steps
                 total_loss += loss.detach().float()
                 first_key = next(iter(batch))
@@ -107,7 +105,7 @@ def train(model, train_dataloader,eval_dataloader, tokenizer, optimizer, lr_sche
                         optimizer.step()
                         optimizer.zero_grad()
                         
-                print(f"\n step {step} is completed and loss is {loss.detach().float()}")        
+                print(f"\n step {step} is completed and loss is {loss.detach().float()}")
         # Reducing total_loss across all devices if there's more than one CUDA device
         if torch.cuda.device_count() > 1 and train_config.enable_fsdp:
             dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
@@ -201,7 +199,7 @@ def evaluation(model,train_config, eval_dataloader, local_rank, tokenizer):
                 if train_config.enable_fsdp:
                     batch[key] = batch[key].to(local_rank)
                 else:
-                    batch[key] = batch[key].to('cuda')
+                    batch[key] = batch[key].to('cuda:0')
             # Ensure no gradients are computed for this scope to save memory
             with torch.no_grad():
                 # Forward pass and compute loss
