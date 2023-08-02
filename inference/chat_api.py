@@ -82,7 +82,7 @@ app.add_middleware(
 def run_query(
     model, 
     queries,
-    max_new_tokens =256, #The maximum numbers of tokens to generate
+    max_new_tokens =1024, #The maximum numbers of tokens to generate
     seed: int=42, #seed value for reproducibility
     do_sample: bool=True, #Whether or not to use sampling ; use greedy decoding otherwise.
     use_cache: bool=True,  #[optional] Whether or not the model should use the past last key/values attentions Whether or not the model should use the past last key/values attentions (if applicable to the model) to speed up decoding.
@@ -114,7 +114,8 @@ def run_query(
                 **kwargs
             )
 
-            output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            #output_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            output_text = tokenizer.batch_decode(outputs[:, tokens.shape[1]:])[0]
             results.append(output_text)
             print(f"Model output:\n{output_text}")
 
